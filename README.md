@@ -57,6 +57,8 @@ Basically, we're comparing the cost of calling a method on a concrete type vs. a
 ## The result
 
 ```
+$ go version
+go version go1.6.2 darwin/amd64
 $ go run main.go
 [concrete]  computed 100000000 sums in 41.966579ms
 [interface] computed 100000000 sums in 2.799456753s
