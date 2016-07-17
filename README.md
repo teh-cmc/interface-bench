@@ -68,4 +68,4 @@ Making 100 million method calls on a concrete type is around 66 times faster tha
 
 ## The conclusion
 
-Theses things can be really slow, which may or may not be an issue depending on your use-case; just keep that in mind and everything shall be okay.
+These things can be really slow, which may or may not be an issue depending on your use-case; just keep that in mind and everything shall be okay.
