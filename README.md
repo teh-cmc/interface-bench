@@ -61,15 +61,15 @@ $ go version
 go version go1.6.2 darwin/amd64
 $ sysctl -n machdep.cpu.brand_string
 Intel(R) Core(TM) i7-4870HQ CPU @ 2.50GHz
-$ go run main.go
+$ go run concrete_vs_interface.go
 [concrete]  computed 100000000 sums in 41.966579ms
 [interface] computed 100000000 sums in 2.799456753s
 ```
 
-At first glance, it would seem that going through the interface dispatch machinery comes with a terrifying 6500% slowdown... and, indeed, that's what I thought at first; until @twotwotwo [rightfully demonstrated how completely broken my benchmark actually was](https://github.com/teh-cmc/interface-bench/issues/1).
+At first glance, it would seem that going through the interface dispatch machinery comes with a terrifying 6500% slow-down... and, indeed, that's what I thought at first; until @twotwotwo [rightfully demonstrated how completely broken my benchmark actually was](https://github.com/teh-cmc/interface-bench/issues/1).
 
 So, what is really going on here?  
-For a concise answer, have a look at #1. If you're looking for the long version, just continue reading below.
+For a concise answer, have a look at #1. If you're looking for the long version, you may continue reading below.
 
 ### Why are the concrete calls this fast?
 
@@ -96,7 +96,7 @@ $ go run -gcflags '-l' main.go
 
 **2. no escaping**
 
-There are no pointers involved in this snippet, no variables escaping from the stack either; and with `Sum` being inlined, everything is actually happening within the same stack-frame: there is literally no work at all to be done by the memory allocator nor the garbage collector.
+There are no pointers involved in this snippet, no variables escaping from the stack either; and with `Sum` being inlined, everything is literally happening within the same stack-frame: there is simply no work at all to be done by the memory allocator nor the garbage collector.
 
 Go code can't go much faster than this.
 
@@ -104,12 +104,12 @@ Go code can't go much faster than this.
 
 100 million calls in 2800ms (~35.5 million per sec), on the other hand, seems particularly slow.
 
-As @twotwotwo mentioned in #1, the reason for this slowdown stems from a change that shipped with the 1.4 release of the Go runtime:  
+As @twotwotwo mentioned in #1, this slow-down stems from a change that shipped with the 1.4 release of the Go runtime:  
 > The implementation of interface values has been modified. In earlier releases, the interface contained a word that was either a pointer or a one-word scalar value, depending on the type of the concrete object stored. This implementation was problematical for the garbage collector, so as of 1.4 interface values always hold a pointer. In running programs, most interface values were pointers anyway, so the effect is minimal, but programs that store integers (for example) in interfaces will see more allocations.
 
-Because of this change, every time `iInterface.Sum(Int(10))` is called, `sizeof(iInterface)` bytes have to be allocated on the heap and the value of `iInterface` has to be copied to that new location.
+Because of this, every time `iInterface.Sum(Int(10))` returns a result, `sizeof(Int)` bytes have to be allocated on the heap and the value of the current variable has to be copied to that new location.
 
-This is obviously a huge amount of work; and indeed, a pprof trace show that most of the time is spent allocating bytes and copying values:  
+This obviously induces a huge amount of work; and, indeed, a pprof trace shows that most of the time is spent allocating bytes and copying values as part of the process of converting types to interfaces (i.e. `runtime.convT2I`):  
 ```
   flat  flat%   sum%        cum   cum%
  740ms 28.24% 28.24%     1180ms 45.04%  runtime.mallocgc
@@ -124,4 +124,99 @@ This is obviously a huge amount of work; and indeed, a pprof trace show that mos
   80ms  3.05% 94.27%       80ms  3.05%  runtime.(*mspan).sweep.func1
 ```
 
-How can we fix this?
+Note that GC/STW latencies are not even part of the equation here: if you try running this program with the GC disabled (`GOGC=off`), you should get the exact same results (with Go 1.6+ at least).
+
+So, how can we fix this?
+
+## Round II: Pointers
+
+An idea that naturally comes to mind when trying to reduce copying is to use pointers.  
+The code is [as follows](./concrete_vs_interface_pointers.go):  
+```Go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/pkg/profile"
+)
+
+// -----------------------------------------------------------------------------
+
+// Int provides an `int64` that implements the `Summable` interface.
+type Int int64
+
+// Sum simply adds two `Int`s.
+func (i *Int) Sum(i2 Int) *Int { *i += i2; return i }
+
+type Summable interface {
+	Sum(i Int) *Int
+}
+
+// -----------------------------------------------------------------------------
+
+const nbOps int = 1e8
+
+func main() {
+	defer profile.Start(profile.CPUProfile).Stop()
+
+	var start time.Time
+	var zero Int
+
+	var iConcreteP *Int = &zero
+	start = time.Now()
+	for i := 0; i < nbOps; i++ {
+		iConcreteP = iConcreteP.Sum(Int(10))
+	}
+	_ = iConcreteP
+	fmt.Printf("[concrete]  computed %d sums in %v\n", nbOps, time.Now().Sub(start))
+
+	var iInterfaceP Summable = &zero
+	start = time.Now()
+	for i := 0; i < nbOps; i++ {
+		iInterfaceP = iInterfaceP.Sum(Int(10))
+	}
+	_ = iInterfaceP
+	fmt.Printf("[interface] computed %d sums in %v\n", nbOps, time.Now().Sub(start))
+}
+```
+
+The code is almost the same, except that `Sum` now applies to a pointer and returns that same pointer as a result.
+
+The results look like these:  
+```
+$ go version
+go version go1.6.2 darwin/amd64
+$ sysctl -n machdep.cpu.brand_string
+Intel(R) Core(TM) i7-4870HQ CPU @ 2.50GHz
+$ go run concrete_vs_interface_pointers.go
+[concrete]  computed 100000000 sums in 178.189757ms
+[interface] computed 100000000 sums in 593.659837ms
+```
+
+### 4x slower concrete calls
+
+The reason for this slow-down is simply the overhead of dereferencing the `iConcrete` pointer for each summation.
+
+Not much more we can do here.
+
+### 5x faster interface calls
+
+The reason for this speed-up is that we've completely removed the need to allocate `sizeof(Int)` on the heap and copy values around every time we assign the return value of `Sum` to `iInterface`.
+
+A quick look at the pprof trace will confirm our thoughts:  
+```
+  flat  flat%   sum%        cum   cum%
+ 280ms 56.00% 56.00%      280ms 56.00%  main.(*Int).Sum
+ 150ms 30.00% 86.00%      430ms 86.00%  main.main
+  70ms 14.00%   100%       70ms 14.00%  runtime.usleep
+     0     0%   100%      430ms 86.00%  runtime.goexit
+     0     0%   100%      430ms 86.00%  runtime.main
+     0     0%   100%       70ms 14.00%  runtime.mstart
+     0     0%   100%       70ms 14.00%  runtime.mstart1
+     0     0%   100%       70ms 14.00%  runtime.sysmon
+```
+There is effectively no trace of `runtime.mallocgc`, `runtime.convT2I` or anything else that's part of the process of converting types to interfaces (T2I) here.
+
+This is still 3-4x slower than concrete calls though; can we make it even faster?
