@@ -164,20 +164,20 @@ func main() {
 	var start time.Time
 	var zero Int
 
-	var iConcreteP *Int = &zero
+	var iConcrete *Int = &zero
 	start = time.Now()
 	for i := 0; i < nbOps; i++ {
-		iConcreteP = iConcreteP.Sum(Int(10))
+		iConcrete = iConcrete.Sum(Int(10))
 	}
-	_ = iConcreteP
+	_ = iConcrete
 	fmt.Printf("[concrete]  computed %d sums in %v\n", nbOps, time.Now().Sub(start))
 
-	var iInterfaceP Summable = &zero
+	var iInterface Summable = &zero
 	start = time.Now()
 	for i := 0; i < nbOps; i++ {
-		iInterfaceP = iInterfaceP.Sum(Int(10))
+		iInterface = iInterface.Sum(Int(10))
 	}
-	_ = iInterfaceP
+	_ = iInterface
 	fmt.Printf("[interface] computed %d sums in %v\n", nbOps, time.Now().Sub(start))
 }
 ```
@@ -220,3 +220,85 @@ A quick look at the pprof trace will confirm our thoughts:
 There is effectively no trace of `runtime.mallocgc`, `runtime.convT2I` or anything else that's part of the process of converting types to interfaces (T2I) here.
 
 This is still 3-4x slower than concrete calls though; can we make it even faster?
+
+## Round III: In-place
+
+Since we're now applying `Sum` to a pointer, we might as well not return anything.  
+This will make some nice chaining patterns impossible but, on the other hand, should entirely remove the overhead of creating an interface every time we assign the return value of `Sum` to `iInterface`.  
+The code is [as follows](./concrete_vs_interface_pointers_inplace.go):  
+```Go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/pkg/profile"
+)
+
+// -----------------------------------------------------------------------------
+
+// Int provides an `int64` that implements the `Summable` interface.
+type Int int64
+
+// Sum simply adds two `Int`s.
+func (i *Int) Sum(i2 Int) { *i += i2 }
+
+type Summable interface {
+	Sum(i Int)
+}
+
+// -----------------------------------------------------------------------------
+
+const nbOps int = 1e8
+
+func main() {
+	defer profile.Start(profile.CPUProfile).Stop()
+
+	var start time.Time
+	var zero Int
+
+	var iConcrete *Int = &zero
+	start = time.Now()
+	for i := 0; i < nbOps; i++ {
+		iConcrete.Sum(Int(10))
+	}
+	_ = iConcrete
+	fmt.Printf("[concrete]  computed %d sums in %v\n", nbOps, time.Now().Sub(start))
+
+	var iInterface Summable = &zero
+	start = time.Now()
+	for i := 0; i < nbOps; i++ {
+		iInterface.Sum(Int(10))
+	}
+	_ = iInterface
+	fmt.Printf("[interface] computed %d sums in %v\n", nbOps, time.Now().Sub(start))
+}
+```
+
+The results look like these:  
+```
+$ go version
+go version go1.6.2 darwin/amd64
+$ sysctl -n machdep.cpu.brand_string
+Intel(R) Core(TM) i7-4870HQ CPU @ 2.50GHz
+$ go run concrete_vs_interface_pointers_inplace.go
+[concrete]  computed 100000000 sums in 215.192313ms
+[interface] computed 100000000 sums in 222.486475ms
+```
+
+The overhead of going through an interface is now barely noticeable.. in fact, it's sometimes even faster than the concrete calls!
+
+### Wait... did the concrete calls just get slower?!
+
+_Yes, they did._  
+Removing the return value of the `Sum` method noticeably made the concrete calls ~17% slower (going from 180ms on average to 210ms).
+
+I haven't had the time to look into this, so I'm not sure about the exact cause for this slow-down; but I'm going to assume that the presence of the return value allows the compiler to do some tricky optimizations...  
+I'll dig into this once I find the time; if you know what's going on, please open an issue!
+
+### Interface calls are now as fast as concrete calls!
+
+Finally, now that we've completely removed the need to build interfaces when assigning `Sum`'s return values; we've removed all the overhead we could remove.
+
+In this configuration, using either concrete or interface calls has virtually the same cost (although, in reality, concrete calls can be made faster with the use of a return value).
