@@ -2,6 +2,24 @@
 
 Digging into some of Go's subtleties regarding the use of interfaces and the performance issues that might ensue.
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Interface-Bench](#interface-bench)
+  - [Round I: Method calls on concrete types vs. interfaces](#round-i-method-calls-on-concrete-types-vs-interfaces)
+    - [Why are the concrete calls this fast?](#why-are-the-concrete-calls-this-fast)
+    - [Why are the interface calls this slow?](#why-are-the-interface-calls-this-slow)
+  - [Round II: Pointers](#round-ii-pointers)
+    - [4x slower concrete calls](#4x-slower-concrete-calls)
+    - [5x faster interface calls](#5x-faster-interface-calls)
+  - [Round III: In-place](#round-iii-in-place)
+    - [Wait... did the concrete calls just get slower?!](#wait-did-the-concrete-calls-just-get-slower)
+    - [Interface calls are now as fast as concrete calls!](#interface-calls-are-now-as-fast-as-concrete-calls)
+  - [Conclusion](#conclusion)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 ## Round I: Method calls on concrete types vs. interfaces
 
 Let's compare the performances of doing 100 million method calls on a concrete type (`int64`) vs. an interface.  
@@ -302,3 +320,10 @@ I'll dig into this once I find the time; if you know what's going on, please ope
 Finally, now that we've completely removed the need to build interfaces when assigning `Sum`'s return values; we've removed all the overhead we could remove.
 
 In this configuration, using either concrete or interface calls has virtually the same cost (although, in reality, concrete calls can be made faster with the use of a return value).
+
+## Conclusion
+
+Technically, Go interfaces' method-dispatch machinery barely has any overhead compared to a simple method call on a concrete type.
+
+In practice, due to the way interfaces are implemented, it's easy to stumble upon various more-or-less obvious pitfalls that can result in a lot of overhead, primarily caused by implicit allocations and copies.  
+Sometimes, compiler optimizations will save you; and sometimes they won't.
