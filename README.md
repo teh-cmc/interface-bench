@@ -125,7 +125,7 @@ Go code can't go much faster than this.
 As @twotwotwo mentioned in #1, this slow-down stems from a change that shipped with the 1.4 release of the Go runtime:  
 > The implementation of interface values has been modified. In earlier releases, the interface contained a word that was either a pointer or a one-word scalar value, depending on the type of the concrete object stored. This implementation was problematical for the garbage collector, so as of 1.4 interface values always hold a pointer. In running programs, most interface values were pointers anyway, so the effect is minimal, but programs that store integers (for example) in interfaces will see more allocations.
 
-Because of this, every time `iInterface.Sum(Int(10))` returns a result, `sizeof(Int)` bytes have to be allocated on the heap and the value of the current variable has to be copied to that new location.
+Because of this, every time `iInterface.Sum(Int(10))` returns a result and assigns it to `iInterface`, `sizeof(Int)` bytes have to be allocated on the heap and the value of the current variable has to be copied to that new location.
 
 This obviously induces a huge amount of work; and, indeed, a pprof trace shows that most of the time is spent allocating bytes and copying values as part of the process of converting types to interfaces (i.e. `runtime.convT2I`):  
 ```
