@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"time"
+
+	"github.com/pkg/profile"
 )
 
 // -----------------------------------------------------------------------------
@@ -22,6 +24,8 @@ type Summable interface {
 const nbOps int = 1e8
 
 func main() {
+	defer profile.Start(profile.CPUProfile).Stop()
+
 	var start time.Time
 
 	var iConcrete Int
