@@ -1,6 +1,6 @@
 # Interface-Bench
 
-Digging into some of Go's subtleties regarding the use of interfaces and the performance issues that might ensue.
+A quick look at some of Go's subtleties regarding the use of interfaces and the performance issues that might ensue.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
